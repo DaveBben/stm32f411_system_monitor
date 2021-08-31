@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.</center></h2>
-  *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
+ * All rights reserved.</center></h2>
+ *
+ * This software component is licensed by ST under BSD 3-Clause license,
+ * the "License"; You may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
+ *                        opensource.org/licenses/BSD-3-Clause
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -25,6 +25,10 @@
 /* USER CODE BEGIN Includes */
 #include "ssd1306.h"
 #include "fonts.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include "ws2812b/ws2812b.h"
+
 
 /* USER CODE END Includes */
 
@@ -45,7 +49,41 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+TIM_HandleTypeDef htim1;
+
 /* USER CODE BEGIN PV */
+typedef enum {
+	  	CPU_FREQ = 1,
+	    CPU_UTIL = 2,
+	    CPU_SPEED = 3,
+	    CPU_TEMP = 4,
+	    CPU_NAME = 5,
+	    RAM = 6,
+	    GPU_FREQ = 7,
+	    GPU_SPEED = 8,
+	    GPU_MEM = 9,
+	    GPU_FPS = 10,
+	    GPU_NAME = 11,
+	    GPU_UTIL = 12,
+	    GPU_TEMP = 13,
+
+} DataHeaders;
+
+struct System {
+   int  cpu_frequency;
+   uint8_t  cpu_util;
+   uint8_t cpu_speed;
+   uint8_t  cpu_temp;
+   char   cpu_name[50];
+   uint8_t ram_util;
+   int gpu_freq;
+   char gpu_speed[50];
+   uint8_t gpu_mem;
+   int gpu_fps;
+   char gpu_name[50];
+   uint8_t gpu_util;
+   uint8_t gpu_temp;
+};
 
 
 
@@ -55,29 +93,31 @@ I2C_HandleTypeDef hi2c1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-extern uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
-extern void CDC_ReadRxBuffer_FS(uint8_t* Buf, uint8_t Len);
+extern uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len);
+extern void CDC_ReadRxBuffer_FS(uint8_t *Buf, uint8_t Len);
 extern uint8_t CDC_GetRxBufferBytesAvailable_FS(void);
 extern void CDC_FlushRxBuffer_FS();
-void Monitor_Get_Values(uint8_t* raw_string, size_t srcSize, int* buffer);
-void writeToDisplay(char* str);
+extern void CDC_Read_Next();
+void Monitor_Get_Values(uint8_t *raw_string, size_t srcSize, int *buffer);
+void writeToDisplay(char *str);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void writeToDisplay(char* str){
-	 //HAL_Delay(1000);
+void writeToDisplay(char *str) {
+	//HAL_Delay(1000);
 
-	    // ssd1306_Fill(Black);
-	     ssd1306_UpdateScreen(&hi2c1);
+	// ssd1306_Fill(Black);
+	ssd1306_UpdateScreen(&hi2c1);
 
-	    //HAL_Delay(1000);
+	//HAL_Delay(1000);
 
-	     // Write data to local screenbuffer
-	     ssd1306_SetCursor(0, 0);
-	     ssd1306_WriteString(str, Font_11x18, White);
+	// Write data to local screenbuffer
+	ssd1306_SetCursor(0, 0);
+	ssd1306_WriteString(str, Font_11x18, White);
 
 //	     ssd1306_SetCursor(0, 36);
 //	     ssd1306_WriteString(str, Font_11x18, White);
@@ -89,43 +129,38 @@ void writeToDisplay(char* str){
 //	         }
 //	     }
 
-	     // Copy all data from local screenbuffer to the screen
-	     ssd1306_UpdateScreen(&hi2c1);
+// Copy all data from local screenbuffer to the screen
+	ssd1306_UpdateScreen(&hi2c1);
 
+}
+
+void updateDisplay(struct System *system) {
+
+
+
+	// ssd1306_Fill(Black);
+	ssd1306_UpdateScreen(&hi2c1);
+
+	char cpu_text[20] = {0};
+
+	sprintf(cpu_text, "CPU %d %d C", system->cpu_util, system->cpu_temp);
+
+
+
+
+	// Write data to local screenbuffer
+	ssd1306_SetCursor(0, 15);
+	ssd1306_WriteString(cpu_text, Font_11x18, White);
+
+
+
+// Copy all data from local screenbuffer to the screen
+	ssd1306_UpdateScreen(&hi2c1);
 
 }
 
 
 
-void Monitor_Get_Values(uint8_t* raw_string, size_t srcSize, int* buffer){
-	char letters[10] = {0}; //There shouldn't be a number greater than 4 digits
-	uint8_t values_counter = 0;
-	uint8_t letters_counter = 0;
-	if(raw_string[0] == '['){
-		for(uint8_t i = 1; i < srcSize; i++){
-			if(raw_string[i] == ',' || raw_string[i] == ']'){
-				int num;
-				sscanf(letters, "%d", &num);
-				buffer[values_counter] = num;
-				values_counter++;
-				letters_counter = 0;
-				memset(letters, 0, 10);
-			}
-			else{
-			letters[letters_counter] = raw_string[i];
-			letters_counter++;
-			}
-
-		}
-
-	}else{
-		//throw error
-	}
-
-
-
-
-}
 
 /* USER CODE END 0 */
 
@@ -137,7 +172,6 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
 	char msg[11] = "No Data";
-
 
   /* USER CODE END 1 */
 
@@ -161,65 +195,68 @@ int main(void)
   MX_GPIO_Init();
   MX_USB_DEVICE_Init();
   MX_I2C1_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
+	// Init lcd using one of the stm32HAL i2c typedefs
+	if (ssd1306_Init(&hi2c1) != 0) {
+		Error_Handler();
+	}
 
-  // Init lcd using one of the stm32HAL i2c typedefs
-   if (ssd1306_Init(&hi2c1) != 0) {
-     Error_Handler();
-   }
+//	writeToDisplay(msg);
 
+	char message[20] = { 0 };
 
-   writeToDisplay(msg);
+	uint8_t data_frame_buffer[64] = {0};
 
+	struct System system;
 
-
-
-   char message[20] = {0};
-
+	DataHeaders headers;
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-	  uint8_t bytesAvailable = CDC_GetRxBufferBytesAvailable_FS();
-      if(bytesAvailable != 0){
-    	  uint8_t raw_string_buffer[bytesAvailable +1];
-    	  int system_values[7];
-    	  memset(raw_string_buffer, 0, bytesAvailable);  // clear the buffer
-    	  CDC_ReadRxBuffer_FS(raw_string_buffer, bytesAvailable);
-    	  raw_string_buffer[bytesAvailable] = '\0';
-    	 // Monitor_Get_Values(raw_string_buffer, sizeof raw_string_buffer, system_values); //TODO: error handling
+	while (1) {
+		uint8_t bytesAvailable = CDC_GetRxBufferBytesAvailable_FS();
+		if (bytesAvailable != 0) {
+			memset(data_frame_buffer, 0, 64);  // clear the buffer
+			CDC_ReadRxBuffer_FS(data_frame_buffer, bytesAvailable);
 
-    	  sprintf(message, "v: %d ", raw_string_buffer[0]);
+			DataHeaders data_head = (DataHeaders) data_frame_buffer[0];
 
 
-//    	 if(system_values[0] < 10){
-//    		 sprintf(message, "CPU: %d ", system_values[0]);
-//    	 }else{
-//    		 sprintf(message, "CPU: %d", system_values[0]);
-//    	 }
+			switch(data_head){
+			    case CPU_UTIL: {
+			    	system.cpu_util = data_frame_buffer[1];
+			    	break;
+			    }
+			    case CPU_TEMP: {
+			    	system.cpu_temp = data_frame_buffer[1];
+			    	break;
+			    }
+			    case RAM: {
+			    	system.ram_util = data_frame_buffer[1];
+			    	break;
+			    }
+			    default: {
+			      break;
+			    }
+			}
 
+			updateDisplay(&system);
+			CDC_FlushRxBuffer_FS();
+			CDC_Read_Next();
 
-
-
-
-    	   writeToDisplay(message);
-    	   memset(message, 0, 20);
-    	  CDC_FlushRxBuffer_FS();
-
-      }
+		}
 
 //	  CDC_Transmit_FS(msg,sizeof(msg));
 //	  HAL_Delay(1000);
 
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+	}
   /* USER CODE END 3 */
 }
 
@@ -282,7 +319,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.ClockSpeed = 400000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -301,6 +338,52 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -312,14 +395,14 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PB15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
+  /*Configure GPIO pin : PB7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -338,11 +421,10 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+	/* User can add his own implementation to report the HAL error return state */
+	__disable_irq();
+	while (1) {
+	}
   /* USER CODE END Error_Handler_Debug */
 }
 
