@@ -25,11 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "ssd1306.h"
 #include "fonts.h"
-#include "ws2812b/ws2812b.h"
-#include <stdint.h>
-#include <stdlib.h>
-
-
+#include "math.h"
 
 /* USER CODE END Includes */
 
@@ -40,11 +36,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// Helper defines
-#define newColor(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) <<  8) | (b))
-#define Red(c) ((uint8_t)((c >> 16) & 0xFF))
-#define Green(c) ((uint8_t)((c >> 8) & 0xFF))
-#define Blue(c) ((uint8_t)(c & 0xFF))
+#define MAX_LED 12
+#define USE_BRIGHTNESS 1
+#define PI 3.14159265
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,46 +54,44 @@ TIM_HandleTypeDef htim1;
 DMA_HandleTypeDef hdma_tim1_ch1;
 
 /* USER CODE BEGIN PV */
-// RGB Framebuffers
-uint8_t frameBuffer[3*60];
-uint8_t frameBuffer2[3*20];
 
-
+uint8_t LED_Data[MAX_LED][4];
+uint8_t LED_Mod[MAX_LED][4];  // for brightness
+uint16_t pwmData[(24 * MAX_LED) + 50];
+int datasentflag=0;
 
 typedef enum {
-	  	CPU_FREQ = 1,
-	    CPU_UTIL = 2,
-	    CPU_SPEED = 3,
-	    CPU_TEMP = 4,
-	    CPU_NAME = 5,
-	    RAM = 6,
-	    GPU_FREQ = 7,
-	    GPU_SPEED = 8,
-	    GPU_MEM = 9,
-	    GPU_FPS = 10,
-	    GPU_NAME = 11,
-	    GPU_UTIL = 12,
-	    GPU_TEMP = 13,
+	CPU_FREQ = 1,
+	CPU_UTIL = 2,
+	CPU_SPEED = 3,
+	CPU_TEMP = 4,
+	CPU_NAME = 5,
+	RAM = 6,
+	GPU_FREQ = 7,
+	GPU_SPEED = 8,
+	GPU_MEM = 9,
+	GPU_FPS = 10,
+	GPU_NAME = 11,
+	GPU_UTIL = 12,
+	GPU_TEMP = 13,
 
 } DataHeaders;
 
 struct System {
-   int  cpu_frequency;
-   uint8_t  cpu_util;
-   uint8_t cpu_speed;
-   uint8_t  cpu_temp;
-   char   cpu_name[50];
-   uint8_t ram_util;
-   int gpu_freq;
-   char gpu_speed[50];
-   uint8_t gpu_mem;
-   int gpu_fps;
-   char gpu_name[50];
-   uint8_t gpu_util;
-   uint8_t gpu_temp;
+	int cpu_frequency;
+	uint8_t cpu_util;
+	uint8_t cpu_speed;
+	uint8_t cpu_temp;
+	char cpu_name[50];
+	uint8_t ram_util;
+	int gpu_freq;
+	char gpu_speed[50];
+	uint8_t gpu_mem;
+	int gpu_fps;
+	char gpu_name[50];
+	uint8_t gpu_util;
+	uint8_t gpu_temp;
 };
-
-
 
 /* USER CODE END PV */
 
@@ -150,162 +143,91 @@ void writeToDisplay(char *str) {
 
 void updateDisplay(struct System *system) {
 
-
-
 	// ssd1306_Fill(Black);
 	ssd1306_UpdateScreen(&hi2c1);
 
-	char cpu_text[20] = {0};
+	char cpu_text[20] = { 0 };
 
 	sprintf(cpu_text, "CPU %d %d C", system->cpu_util, system->cpu_temp);
-
-
-
 
 	// Write data to local screenbuffer
 	ssd1306_SetCursor(0, 15);
 	ssd1306_WriteString(cpu_text, Font_11x18, White);
-
-
 
 // Copy all data from local screenbuffer to the screen
 	ssd1306_UpdateScreen(&hi2c1);
 
 }
 
-uint32_t Wheel(uint8_t WheelPos) {
-  WheelPos = 255 - WheelPos;
-  if(WheelPos < 85) {
-    return newColor(255 - WheelPos * 3, 0, WheelPos * 3);
-  }
-  if(WheelPos < 170) {
-    WheelPos -= 85;
-    return newColor(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return newColor(WheelPos * 3, 255 - WheelPos * 3, 0);
+void Set_LED(int LEDnum, int Red, int Green, int Blue) {
+	LED_Data[LEDnum][0] = LEDnum;
+	LED_Data[LEDnum][1] = Green;
+	LED_Data[LEDnum][2] = Red;
+	LED_Data[LEDnum][3] = Blue;
 }
 
-
-
-void visRainbow(uint8_t *frameBuffer, uint32_t frameBufferSize, uint32_t effectLength)
+void Set_Brightness(int brightness)  // 0-45
 {
-	uint32_t i;
-	static uint8_t x = 0;
+#if USE_BRIGHTNESS
 
-	x += 1;
-
-	if(x == 256*5)
-		x = 0;
-
-	for( i = 0; i < frameBufferSize / 3; i++)
-	{
-		uint32_t color = Wheel(((i * 256) / effectLength + x) & 0xFF);
-
-		frameBuffer[i*3 + 0] = color & 0xFF;
-		frameBuffer[i*3 + 1] = color >> 8 & 0xFF;
-		frameBuffer[i*3 + 2] = color >> 16 & 0xFF;
-	}
-}
-
-
-void visDots(uint8_t *frameBuffer, uint32_t frameBufferSize, uint32_t random, uint32_t fadeOutFactor)
-{
-	uint32_t i;
-
-	for( i = 0; i < frameBufferSize / 3; i++)
-	{
-
-		if(rand() % random == 0)
-		{
-			frameBuffer[i*3 + 0] = 255;
-			frameBuffer[i*3 + 1] = 255;
-			frameBuffer[i*3 + 2] = 255;
+	if (brightness > 45)
+		brightness = 45;
+	for (int i = 0; i < MAX_LED; i++) {
+		LED_Mod[i][0] = LED_Data[i][0];
+		for (int j = 1; j < 4; j++) {
+			float angle = 90 - brightness;  // in degrees
+			angle = angle * PI / 180;  // in rad
+			LED_Mod[i][j] = (LED_Data[i][j]) / (tan(angle));
 		}
-
-
-		if(frameBuffer[i*3 + 0] > fadeOutFactor)
-			frameBuffer[i*3 + 0] -= frameBuffer[i*3 + 0]/fadeOutFactor;
-		else
-			frameBuffer[i*3 + 0] = 0;
-
-		if(frameBuffer[i*3 + 1] > fadeOutFactor)
-			frameBuffer[i*3 + 1] -= frameBuffer[i*3 + 1]/fadeOutFactor;
-		else
-			frameBuffer[i*3 + 1] = 0;
-
-		if(frameBuffer[i*3 + 2] > fadeOutFactor)
-			frameBuffer[i*3 + 2] -= frameBuffer[i*3 + 2]/fadeOutFactor;
-		else
-			frameBuffer[i*3 + 2] = 0;
 	}
+
+#endif
+
 }
 
+//https://controllerstech.com/interface-ws2812-with-stm32/
+void WS2812_Send(void) {
+	uint32_t indx = 0;
+	uint32_t color;
 
+	for (int i = 0; i < MAX_LED; i++) {
+#if USE_BRIGHTNESS
+		color =
+				((LED_Mod[i][1] << 16) | (LED_Mod[i][2] << 8) | (LED_Mod[i][3]));
+#else
+		color = ((LED_Data[i][1]<<16) | (LED_Data[i][2]<<8) | (LED_Data[i][3]));
+#endif
 
-void neopixel_handle2()
-{
-	static uint32_t timestamp;
-
-	if(HAL_GetTick() - timestamp > 10)
-	{
-		timestamp = HAL_GetTick();
-
-		// Animate next frame, each effect into each output RGB framebuffer
-		visRainbow(frameBuffer, sizeof(frameBuffer), 15);
-		visDots(frameBuffer2, sizeof(frameBuffer2), 50, 40);
-	}
-}
-
-
-
-void neopixel_handle(){
-	if(ws2812b.transferComplete)
-		{
-			// Update your framebuffer here or swap buffers
-			neopixel_handle2();
-
-			// Signal that buffer is changed and transfer new data
-			ws2812b.startTransfer = 1;
-			ws2812b_handle();
-		}
-}
-
-void neopixel_init(){
-	uint8_t i;
-
-
-
-		// 4 paralel output LED strips needs 18% overhead during TX
-		// 8 paralel output LED strips overhead is 8us of 30us period which is 28% - see the debug output PD15/13
-
-		// If you need more parallel LED strips, increase the WS2812_BUFFER_COUNT value
-		for( i = 0; i < WS2812_BUFFER_COUNT; i++)
-		{
-
-			// Set output channel/pin, GPIO_PIN_0 = 0, for GPIO_PIN_5 = 5 - this has to correspond to WS2812B_PINS
-			ws2812b.item[i].channel = i;
-
-			// Every even output line has second frameBuffer2 with different effect
-			if(i % 2 == 0)
-			{
-				// Your RGB framebuffer
-				ws2812b.item[i].frameBufferPointer = frameBuffer;
-				// RAW size of framebuffer
-				ws2812b.item[i].frameBufferSize = sizeof(frameBuffer);
-			} else {
-				ws2812b.item[i].frameBufferPointer = frameBuffer2;
-				ws2812b.item[i].frameBufferSize = sizeof(frameBuffer2);
+		for (int i = 23; i >= 0; i--) {
+			if (color & (1 << i)) {
+				pwmData[indx] = 60;  // 2/3 of 90
 			}
 
+			else
+				pwmData[indx] = 30;  // 1/3 of 90
+
+			indx++;
 		}
 
-
-		ws2812b_init();
 	}
 
+	for (int i = 0; i < 50; i++) {
+		pwmData[indx] = 0;
+		indx++;
+	}
+
+	HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*) pwmData, indx);
+	while (!datasentflag) {
+	};
+	datasentflag = 0;
+}
 
 
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+	HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
+	datasentflag=1;
+}
 
 /* USER CODE END 0 */
 
@@ -353,20 +275,52 @@ int main(void)
 
 	char message[20] = { 0 };
 
-	uint8_t data_frame_buffer[64] = {0};
+	uint8_t data_frame_buffer[64] = { 0 };
 
 	struct System system;
 
 	DataHeaders headers;
 
 
-   // neopixel_init();
+
+	  Set_LED(0, 255, 0, 0);
+	  Set_LED(1, 0, 255, 0);
+	  Set_LED(2, 0, 0, 255);
+
+	  Set_LED(3, 46, 89, 128);
+
+	  Set_LED(4, 156, 233, 100);
+	  Set_LED(5, 102, 0, 235);
+	  Set_LED(6, 47, 38, 77);
+
+	  Set_LED(7, 255, 200, 0);
+	  Set_LED(8, 255, 200, 0);
+	  Set_LED(9, 255, 200, 0);
+	  Set_LED(10, 255, 200, 0);
+	  Set_LED(11, 255, 200, 0);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-		//neopixel_handle();
+
+
+		  for (int i=0; i<46; i++)
+			  {
+				  Set_Brightness(i);
+				  WS2812_Send();
+				  HAL_Delay (50);
+			  }
+
+			  for (int i=45; i>=0; i--)
+			  {
+				  Set_Brightness(i);
+				  WS2812_Send();
+				  HAL_Delay (50);
+			  }
+
+
 
 		uint8_t bytesAvailable = CDC_GetRxBufferBytesAvailable_FS();
 		if (bytesAvailable != 0) {
@@ -375,30 +329,27 @@ int main(void)
 
 			DataHeaders data_head = (DataHeaders) data_frame_buffer[0];
 
-
-			switch(data_head){
-			    case CPU_UTIL: {
-			    	system.cpu_util = data_frame_buffer[1];
-			    	break;
-			    }
-			    case CPU_TEMP: {
-			    	system.cpu_temp = data_frame_buffer[1];
-			    	break;
-			    }
-			    case RAM: {
-			    	system.ram_util = data_frame_buffer[1];
-			    	break;
-			    }
-			    default: {
-			      break;
-			    }
+			switch (data_head) {
+			case CPU_UTIL: {
+				system.cpu_util = data_frame_buffer[1];
+				break;
+			}
+			case CPU_TEMP: {
+				system.cpu_temp = data_frame_buffer[1];
+				break;
+			}
+			case RAM: {
+				system.ram_util = data_frame_buffer[1];
+				break;
+			}
+			default: {
+				break;
+			}
 			}
 
 			updateDisplay(&system);
 			CDC_FlushRxBuffer_FS();
 			CDC_Read_Next();
-
-
 
 		}
 
@@ -512,7 +463,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 72-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -587,23 +538,12 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PB7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 
