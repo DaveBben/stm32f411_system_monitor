@@ -25,9 +25,10 @@
 /* USER CODE BEGIN Includes */
 #include "ssd1306.h"
 #include "fonts.h"
+#include "ws2812b/ws2812b.h"
 #include <stdint.h>
 #include <stdlib.h>
-#include "ws2812b/ws2812b.h"
+
 
 
 /* USER CODE END Includes */
@@ -39,6 +40,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// Helper defines
+#define newColor(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) <<  8) | (b))
+#define Red(c) ((uint8_t)((c >> 16) & 0xFF))
+#define Green(c) ((uint8_t)((c >> 8) & 0xFF))
+#define Blue(c) ((uint8_t)(c & 0xFF))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -50,8 +56,15 @@
 I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim1;
+DMA_HandleTypeDef hdma_tim1_ch1;
 
 /* USER CODE BEGIN PV */
+// RGB Framebuffers
+uint8_t frameBuffer[3*60];
+uint8_t frameBuffer2[3*20];
+
+
+
 typedef enum {
 	  	CPU_FREQ = 1,
 	    CPU_UTIL = 2,
@@ -93,6 +106,7 @@ struct System {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_DMA_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 extern uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len);
@@ -159,6 +173,137 @@ void updateDisplay(struct System *system) {
 
 }
 
+uint32_t Wheel(uint8_t WheelPos) {
+  WheelPos = 255 - WheelPos;
+  if(WheelPos < 85) {
+    return newColor(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if(WheelPos < 170) {
+    WheelPos -= 85;
+    return newColor(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return newColor(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+
+
+
+void visRainbow(uint8_t *frameBuffer, uint32_t frameBufferSize, uint32_t effectLength)
+{
+	uint32_t i;
+	static uint8_t x = 0;
+
+	x += 1;
+
+	if(x == 256*5)
+		x = 0;
+
+	for( i = 0; i < frameBufferSize / 3; i++)
+	{
+		uint32_t color = Wheel(((i * 256) / effectLength + x) & 0xFF);
+
+		frameBuffer[i*3 + 0] = color & 0xFF;
+		frameBuffer[i*3 + 1] = color >> 8 & 0xFF;
+		frameBuffer[i*3 + 2] = color >> 16 & 0xFF;
+	}
+}
+
+
+void visDots(uint8_t *frameBuffer, uint32_t frameBufferSize, uint32_t random, uint32_t fadeOutFactor)
+{
+	uint32_t i;
+
+	for( i = 0; i < frameBufferSize / 3; i++)
+	{
+
+		if(rand() % random == 0)
+		{
+			frameBuffer[i*3 + 0] = 255;
+			frameBuffer[i*3 + 1] = 255;
+			frameBuffer[i*3 + 2] = 255;
+		}
+
+
+		if(frameBuffer[i*3 + 0] > fadeOutFactor)
+			frameBuffer[i*3 + 0] -= frameBuffer[i*3 + 0]/fadeOutFactor;
+		else
+			frameBuffer[i*3 + 0] = 0;
+
+		if(frameBuffer[i*3 + 1] > fadeOutFactor)
+			frameBuffer[i*3 + 1] -= frameBuffer[i*3 + 1]/fadeOutFactor;
+		else
+			frameBuffer[i*3 + 1] = 0;
+
+		if(frameBuffer[i*3 + 2] > fadeOutFactor)
+			frameBuffer[i*3 + 2] -= frameBuffer[i*3 + 2]/fadeOutFactor;
+		else
+			frameBuffer[i*3 + 2] = 0;
+	}
+}
+
+
+
+void neopixel_handle2()
+{
+	static uint32_t timestamp;
+
+	if(HAL_GetTick() - timestamp > 10)
+	{
+		timestamp = HAL_GetTick();
+
+		// Animate next frame, each effect into each output RGB framebuffer
+		visRainbow(frameBuffer, sizeof(frameBuffer), 15);
+		visDots(frameBuffer2, sizeof(frameBuffer2), 50, 40);
+	}
+}
+
+
+
+void neopixel_handle(){
+	if(ws2812b.transferComplete)
+		{
+			// Update your framebuffer here or swap buffers
+			neopixel_handle2();
+
+			// Signal that buffer is changed and transfer new data
+			ws2812b.startTransfer = 1;
+			ws2812b_handle();
+		}
+}
+
+void neopixel_init(){
+	uint8_t i;
+
+
+
+		// 4 paralel output LED strips needs 18% overhead during TX
+		// 8 paralel output LED strips overhead is 8us of 30us period which is 28% - see the debug output PD15/13
+
+		// If you need more parallel LED strips, increase the WS2812_BUFFER_COUNT value
+		for( i = 0; i < WS2812_BUFFER_COUNT; i++)
+		{
+
+			// Set output channel/pin, GPIO_PIN_0 = 0, for GPIO_PIN_5 = 5 - this has to correspond to WS2812B_PINS
+			ws2812b.item[i].channel = i;
+
+			// Every even output line has second frameBuffer2 with different effect
+			if(i % 2 == 0)
+			{
+				// Your RGB framebuffer
+				ws2812b.item[i].frameBufferPointer = frameBuffer;
+				// RAW size of framebuffer
+				ws2812b.item[i].frameBufferSize = sizeof(frameBuffer);
+			} else {
+				ws2812b.item[i].frameBufferPointer = frameBuffer2;
+				ws2812b.item[i].frameBufferSize = sizeof(frameBuffer2);
+			}
+
+		}
+
+
+		ws2812b_init();
+	}
+
 
 
 
@@ -195,6 +340,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USB_DEVICE_Init();
   MX_I2C1_Init();
+  MX_DMA_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
@@ -213,11 +359,15 @@ int main(void)
 
 	DataHeaders headers;
 
+
+   // neopixel_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
+		//neopixel_handle();
+
 		uint8_t bytesAvailable = CDC_GetRxBufferBytesAvailable_FS();
 		if (bytesAvailable != 0) {
 			memset(data_frame_buffer, 0, 64);  // clear the buffer
@@ -247,6 +397,8 @@ int main(void)
 			updateDisplay(&system);
 			CDC_FlushRxBuffer_FS();
 			CDC_Read_Next();
+
+
 
 		}
 
@@ -281,9 +433,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 25;
-  RCC_OscInitStruct.PLL.PLLN = 192;
+  RCC_OscInitStruct.PLL.PLLN = 144;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 3;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -295,9 +447,9 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -351,6 +503,8 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
@@ -371,15 +525,58 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
 
 }
 
