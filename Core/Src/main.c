@@ -102,11 +102,8 @@ static void MX_I2C1_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-extern uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len);
-extern void CDC_ReadRxBuffer_FS(uint8_t *Buf, uint8_t Len);
-extern uint8_t CDC_GetRxBufferBytesAvailable_FS(void);
-extern void CDC_FlushRxBuffer_FS();
-extern void CDC_Read_Next();
+extern uint8_t data_available();
+extern void get_data_frame(uint8_t* buffer, uint8_t size);
 void Monitor_Get_Values(uint8_t *raw_string, size_t srcSize, int *buffer);
 void writeToDisplay(char *str);
 
@@ -147,12 +144,20 @@ void updateDisplay(struct System *system) {
 	ssd1306_UpdateScreen(&hi2c1);
 
 	char cpu_text[20] = { 0 };
+	char ram_text[20] = { 0 };
+	char gpu_text[20] = { 0 };
 
-	sprintf(cpu_text, "CPU %d %d C", system->cpu_util, system->cpu_temp);
+	sprintf(cpu_text, "CPU %d%% %d C", system->cpu_util, system->cpu_temp);
+	sprintf(ram_text, "Memory Util %d%%", system->ram_util);
+	sprintf(gpu_text, "GPU %d%% %d C", system->gpu_util, system->gpu_temp);
 
 	// Write data to local screenbuffer
+	ssd1306_SetCursor(5, 0);
+	ssd1306_WriteString(ram_text, Font_7x10, White);
 	ssd1306_SetCursor(0, 15);
 	ssd1306_WriteString(cpu_text, Font_11x18, White);
+	ssd1306_SetCursor(0, 40);
+	ssd1306_WriteString(gpu_text, Font_11x18, White);
 
 // Copy all data from local screenbuffer to the screen
 	ssd1306_UpdateScreen(&hi2c1);
@@ -200,11 +205,11 @@ void WS2812_Send(void) {
 
 		for (int i = 23; i >= 0; i--) {
 			if (color & (1 << i)) {
-				pwmData[indx] = 60;  // 2/3 of 90
+				pwmData[indx] = 80;  // 2/3 of 120
 			}
 
 			else
-				pwmData[indx] = 30;  // 1/3 of 90
+				pwmData[indx] = 40;  // 1/3 of 120
 
 			indx++;
 		}
@@ -227,6 +232,27 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
 	HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
 	datasentflag=1;
+}
+
+void updateWheel(uint8_t num_leds){
+
+	for(uint8_t i = 0; i < MAX_LED; i++){
+		Set_Brightness(25);
+		if(i < num_leds){
+			Set_LED(i, 0, 0, 255);
+		}else{
+			Set_LED(i, 0, 0, 0);
+		}
+		 WS2812_Send();
+	}
+
+
+}
+
+void initColors(){
+	for(uint8_t i = 0; i < MAX_LED; i++){
+		  Set_LED(i, 0, 0, 255);
+	}
 }
 
 /* USER CODE END 0 */
@@ -272,86 +298,66 @@ int main(void)
 	}
 
 //	writeToDisplay(msg);
-
-	char message[20] = { 0 };
-
-	uint8_t data_frame_buffer[64] = { 0 };
-
 	struct System system;
 
 	DataHeaders headers;
 
-
-
-	  Set_LED(0, 255, 0, 0);
-	  Set_LED(1, 0, 255, 0);
-	  Set_LED(2, 0, 0, 255);
-
-	  Set_LED(3, 46, 89, 128);
-
-	  Set_LED(4, 156, 233, 100);
-	  Set_LED(5, 102, 0, 235);
-	  Set_LED(6, 47, 38, 77);
-
-	  Set_LED(7, 255, 200, 0);
-	  Set_LED(8, 255, 200, 0);
-	  Set_LED(9, 255, 200, 0);
-	  Set_LED(10, 255, 200, 0);
-	  Set_LED(11, 255, 200, 0);
+	uint8_t data_frame_buffer[3] = {0};
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
+			get_data_frame(data_frame_buffer, 3);
+			if(data_frame_buffer[0] != 0){
+				DataHeaders data_head = (DataHeaders) data_frame_buffer[0];
 
+				switch (data_head) {
+				case CPU_UTIL: {
+					system.cpu_util = data_frame_buffer[1];
+					int leds = system.cpu_util/(9);
+					if(leds < 1){
+						leds = 1;
+					}
+					updateWheel(leds);
+					break;
+				}
+				case CPU_TEMP: {
+					system.cpu_temp = data_frame_buffer[1];
+					break;
+				}
+				case RAM: {
+					system.ram_util = data_frame_buffer[1];
+					break;
+				}
+				case GPU_UTIL: {
+					system.gpu_util = data_frame_buffer[1];
+					break;
+				}
+				case GPU_TEMP: {
+					system.gpu_temp = data_frame_buffer[1];
+					break;
+				}
+				default: {
+					break;
+				}
+				}
 
-		  for (int i=0; i<46; i++)
-			  {
-				  Set_Brightness(i);
-				  WS2812_Send();
-				  HAL_Delay (50);
-			  }
+				updateDisplay(&system);
 
-			  for (int i=45; i>=0; i--)
-			  {
-				  Set_Brightness(i);
-				  WS2812_Send();
-				  HAL_Delay (50);
-			  }
-
-
-
-		uint8_t bytesAvailable = CDC_GetRxBufferBytesAvailable_FS();
-		if (bytesAvailable != 0) {
-			memset(data_frame_buffer, 0, 64);  // clear the buffer
-			CDC_ReadRxBuffer_FS(data_frame_buffer, bytesAvailable);
-
-			DataHeaders data_head = (DataHeaders) data_frame_buffer[0];
-
-			switch (data_head) {
-			case CPU_UTIL: {
-				system.cpu_util = data_frame_buffer[1];
-				break;
-			}
-			case CPU_TEMP: {
-				system.cpu_temp = data_frame_buffer[1];
-				break;
-			}
-			case RAM: {
-				system.ram_util = data_frame_buffer[1];
-				break;
-			}
-			default: {
-				break;
-			}
 			}
 
-			updateDisplay(&system);
-			CDC_FlushRxBuffer_FS();
-			CDC_Read_Next();
 
-		}
+
+
+
+
+
+
+
+
+
 
 //	  CDC_Transmit_FS(msg,sizeof(msg));
 //	  HAL_Delay(1000);
@@ -384,9 +390,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 25;
-  RCC_OscInitStruct.PLL.PLLN = 144;
+  RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -400,7 +406,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -463,7 +469,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 72-1;
+  htim1.Init.Period = 120-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;

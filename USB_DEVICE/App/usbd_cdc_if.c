@@ -23,7 +23,7 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "queue.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -98,6 +98,7 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 uint8_t rxBuffer[HL_RX_BUFFER_SIZE]; // Receive buffer
 uint8_t lcBuffer[7]; // Line coding buffer
+struct Queue* queue;
 
 /* USER CODE END PRIVATE_VARIABLES */
 
@@ -173,6 +174,8 @@ static int8_t CDC_Init_FS(void)
 	lcBuffer[4] = 0; // 1 Stop bit
 	lcBuffer[5] = 0; // No parity
 	lcBuffer[6] = 8; // 8 data bits
+
+	queue = createQueue(1);
 
 	return (USBD_OK);
   /* USER CODE END 3 */
@@ -259,7 +262,7 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 		pbuf[6] = lcBuffer[6];
 
 		// Get line coding is invoked when the host connects, clear the RxBuffer when this occurs
-		CDC_FlushRxBuffer_FS();
+
 
 	case CDC_SET_CONTROL_LINE_STATE:
 
@@ -297,12 +300,13 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   /* USER CODE BEGIN 6 */
 	USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
 
-	uint8_t len = (uint8_t) *Len; // Get length
-
-	memset(rxBuffer, 0, HL_RX_BUFFER_SIZE);  // clear the buffer
-	memcpy(rxBuffer, Buf, len);  // copy the data to the buffer
-	memset(Buf, 0, len);   // clear the Buf also
-
+	uint8_t len = (uint8_t) *Len;
+	uint8_t* dataBuffer = enQueue(queue, QNODE_DATA_BYTES);
+	if(dataBuffer){
+		memcpy(dataBuffer, Buf, QNODE_DATA_BYTES);
+	}
+	memset(Buf, 0, len);
+	USBD_CDC_ReceivePacket(&hUsbDeviceFS);
 
 
 	return (USBD_OK);
@@ -360,26 +364,22 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
-void CDC_ReadRxBuffer_FS(uint8_t *Buf, uint8_t Len) {
-	memcpy(Buf, rxBuffer, Len);  // copy the data to the buffer
+uint8_t data_available(){
+
+	return 0;
 }
 
-uint8_t CDC_GetRxBufferBytesAvailable_FS(void) {
-
-	uint8_t index = 0;
-	while (rxBuffer[index] != 0) {
-		index++;
+void get_data_frame(uint8_t* buffer, uint8_t size){
+	struct QNode *temp = deQueue(queue);
+	if(temp){
+		memcpy(buffer, temp->data, QNODE_DATA_BYTES);
+		free(temp->data);
+		free(temp);
+	}else{
+		memset(buffer, 0, QNODE_DATA_BYTES);
 	}
-	return index;
 
-}
 
-void CDC_Read_Next() {
-	USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-}
-
-void CDC_FlushRxBuffer_FS() {
-	memset(rxBuffer, 0, HL_RX_BUFFER_SIZE);
 }
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */

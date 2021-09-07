@@ -61,6 +61,7 @@ void Error_Handler(void);
 
 /* Private defines -----------------------------------------------------------*/
 /* USER CODE BEGIN Private defines */
+#define MAX_DATA_FRAME_BYTES 3
 
 /* USER CODE END Private defines */
 
