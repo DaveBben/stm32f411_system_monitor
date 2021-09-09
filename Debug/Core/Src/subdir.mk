@@ -7,7 +7,6 @@
 C_SRCS += \
 ../Core/Src/fonts.c \
 ../Core/Src/main.c \
-../Core/Src/queue.c \
 ../Core/Src/ssd1306.c \
 ../Core/Src/stm32f4xx_hal_msp.c \
 ../Core/Src/stm32f4xx_it.c \
@@ -18,7 +17,6 @@ C_SRCS += \
 OBJS += \
 ./Core/Src/fonts.o \
 ./Core/Src/main.o \
-./Core/Src/queue.o \
 ./Core/Src/ssd1306.o \
 ./Core/Src/stm32f4xx_hal_msp.o \
 ./Core/Src/stm32f4xx_it.o \
@@ -29,7 +27,6 @@ OBJS += \
 C_DEPS += \
 ./Core/Src/fonts.d \
 ./Core/Src/main.d \
-./Core/Src/queue.d \
 ./Core/Src/ssd1306.d \
 ./Core/Src/stm32f4xx_hal_msp.d \
 ./Core/Src/stm32f4xx_it.d \

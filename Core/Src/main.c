@@ -102,8 +102,8 @@ static void MX_I2C1_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-extern uint8_t data_available();
-extern void get_data_frame(uint8_t* buffer, uint8_t size);
+extern uint8_t isBufferEmpty();
+extern void get_data_frame(uint8_t *buffer);
 void Monitor_Get_Values(uint8_t *raw_string, size_t srcSize, int *buffer);
 void writeToDisplay(char *str);
 
@@ -302,15 +302,15 @@ int main(void)
 
 	DataHeaders headers;
 
-	uint8_t data_frame_buffer[3] = {0};
+	uint8_t data_frame_buffer[255] = {0};
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-			get_data_frame(data_frame_buffer, 3);
-			if(data_frame_buffer[0] != 0){
+		if(!isBufferEmpty()){
+			get_data_frame(data_frame_buffer);
 				DataHeaders data_head = (DataHeaders) data_frame_buffer[0];
 
 				switch (data_head) {
@@ -346,7 +346,8 @@ int main(void)
 
 				updateDisplay(&system);
 
-			}
+
+		}
 
 
 
